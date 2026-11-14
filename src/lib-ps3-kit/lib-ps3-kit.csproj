@@ -1,0 +1,12 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <AssemblyName>lib-ps3-kit</AssemblyName>
+    <PackageId>lib-ps3-kit</PackageId>
+    <RootNamespace>LibPs3Kit</RootNamespace>
+    <Description>Dependency-free library for PlayStation 3 disc images: read a Redump ISO's region table, decrypt it with its disc key (.dkey) into a decrypted ISO, or extract it as a JB folder (PS3_GAME layout), and check the result. Also re-encrypts a decrypted ISO back to the Redump image and reads PARAM.SFO. Pure managed, no dependencies.</Description>
+    <PackageTags>ps3;playstation3;iso;redump;dkey;decrypt;jb;rpcs3;iso9660</PackageTags>
+  </PropertyGroup>
+  <ItemGroup>
+    <InternalsVisibleTo Include="lib-ps3-kit.Tests" />
+  </ItemGroup>
+</Project>

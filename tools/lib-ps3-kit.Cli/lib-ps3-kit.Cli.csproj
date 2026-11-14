@@ -1,0 +1,20 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <OutputType>Exe</OutputType>
+    <TargetFrameworks>net8.0;net10.0</TargetFrameworks>
+    <AssemblyName>ps3-kit</AssemblyName>
+    <RootNamespace>LibPs3Kit.Cli</RootNamespace>
+    <InvariantGlobalization>true</InvariantGlobalization>
+
+    <!-- Installable with `dotnet tool install -g lib-ps3-kit.Cli`. -->
+    <IsPackable>true</IsPackable>
+    <PackAsTool>true</PackAsTool>
+    <PackageId>lib-ps3-kit.Cli</PackageId>
+    <ToolCommandName>ps3-kit</ToolCommandName>
+    <Description>ps3-kit: command-line tool for PlayStation 3 disc images, built on lib-ps3-kit. Show info, decrypt a Redump ISO with its .dkey, extract a JB folder, re-encrypt, and list files.</Description>
+    <PackageTags>ps3;playstation3;iso;dkey;decrypt;jb;cli;dotnet-tool</PackageTags>
+  </PropertyGroup>
+  <ItemGroup>
+    <ProjectReference Include="..\..\src\lib-ps3-kit\lib-ps3-kit.csproj" />
+  </ItemGroup>
+</Project>
