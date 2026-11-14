@@ -162,20 +162,27 @@ public sealed class Ps3Disc : IDisposable
         return EncryptionState.Encrypted;
     }
 
-    /// <summary>Up to eight files that start in an encrypted region and whose header is known, EBOOT.BIN first.</summary>
+    private List<(IsoEntry Entry, byte[] Magic)>? _probes;
+
+    /// <summary>
+    /// Files that start in an encrypted region and whose header is known. PS3_GAME/USRDIR/EBOOT.BIN alone when it
+    /// qualifies (a few folder reads); otherwise up to eight found by walking the whole tree.
+    /// </summary>
     private List<(IsoEntry Entry, byte[] Magic)> Probes()
     {
+        if (_probes is not null) return _probes;
+        bool Usable(IsoEntry e) => !e.IsDirectory && e.Size >= 8 && e.FirstSector >= 0 && Regions.IsEncrypted(e.FirstSector) && MagicFor(e.Name) is not null;
         var list = new List<(IsoEntry, byte[])>();
-        IReadOnlyList<IsoEntry> entries;
-        try { entries = FileSystem.Entries(); }
-        catch (Ps3Exception) { return list; }
-        foreach (var e in entries.OrderBy(e => e.Name.Equals("EBOOT.BIN", StringComparison.OrdinalIgnoreCase) ? 0 : 1))
+        try
         {
-            if (e.IsDirectory || e.Size < 8 || e.FirstSector < 0 || !Regions.IsEncrypted(e.FirstSector)) continue;
-            if (MagicFor(e.Name) is { } magic) list.Add((e, magic));
-            if (list.Count == 8) break;
+            if (FileSystem.Find("PS3_GAME/USRDIR/EBOOT.BIN") is { } eboot && Usable(eboot))
+                list.Add((eboot, MagicFor(eboot.Name)!));
+            else
+                foreach (var e in FileSystem.Entries().Where(Usable).Take(8))
+                    list.Add((e, MagicFor(e.Name)!));
         }
-        return list;
+        catch (Ps3Exception) { }
+        return _probes = list;
     }
 
     private static byte[]? MagicFor(string name)
