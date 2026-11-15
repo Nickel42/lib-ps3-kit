@@ -101,12 +101,33 @@ public sealed class Ps3Disc : IDisposable
     /// A view of the image that decrypts as it reads. <paramref name="key"/> may be null when the image is already
     /// decrypted (or has nothing encrypted). The view shares this disc's file handle: don't use two at once.
     /// </summary>
-    public Ps3DiscStream OpenDecrypted(DiscKey? key)
+    public Ps3DiscStream OpenDecrypted(DiscKey? key) => new(_stream, Regions, key, DecryptTransform(key), leaveOpen: true);
+
+    /// <summary>
+    /// Like <see cref="OpenDecrypted"/>, on a handle of its own opened for reading front to back (the OS reads ahead),
+    /// for a pass over the whole image or its files in disc order. Several can be open at once.
+    /// </summary>
+    internal Ps3DiscStream OpenDecryptedSequential(DiscKey? key)
+    {
+        var transform = DecryptTransform(key);
+        var stream = OpenSequential(Path);
+        try { return new Ps3DiscStream(stream, Regions, key, transform); }
+        catch
+        {
+            stream.Dispose();
+            throw;
+        }
+    }
+
+    /// <summary>The image opened for one pass front to back, with the OS's read-ahead on (large reads skip the small buffer).</summary>
+    internal static FileStream OpenSequential(string path) =>
+        new(path, FileMode.Open, FileAccess.Read, FileShare.Read, 1 << 16, FileOptions.SequentialScan);
+
+    private SectorTransform DecryptTransform(DiscKey? key)
     {
         if (State == EncryptionState.Encrypted && key is null)
             throw new Ps3Exception(Ps3Error.KeyMissing, "This image is encrypted; its disc key (.dkey) is needed.");
-        var transform = State is EncryptionState.Encrypted or EncryptionState.Unknown && key is not null ? SectorTransform.Decrypt : SectorTransform.None;
-        return new Ps3DiscStream(_stream, Regions, key, transform, leaveOpen: true);
+        return State is EncryptionState.Encrypted or EncryptionState.Unknown && key is not null ? SectorTransform.Decrypt : SectorTransform.None;
     }
 
     /// <summary>A view of the image that encrypts the encrypted regions as it reads (for a decrypted image).</summary>

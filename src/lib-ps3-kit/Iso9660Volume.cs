@@ -184,6 +184,13 @@ public sealed class Iso9660Volume
         return new ExtentStream(_stream, entry.Extents);
     }
 
+    /// <summary>A stream over one file's bytes read from <paramref name="image"/>, another view of the same image (for reading on several threads).</summary>
+    internal static Stream OpenFile(Stream image, IsoEntry entry)
+    {
+        if (entry.IsDirectory) throw new ArgumentException("A folder has no data to read.", nameof(entry));
+        return new ExtentStream(image, entry.Extents);
+    }
+
     internal static bool ReadAt(Stream s, long offset, Span<byte> buffer)
     {
         if (offset < 0 || offset + buffer.Length > s.Length) return false;

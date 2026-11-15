@@ -175,4 +175,81 @@ public class Ps3KitTests
         Assert.Equal(buffer.Length, view.ReadAtLeast(buffer, buffer.Length));
         Assert.Equal(image.Plain.AsSpan(29 * TestImage.S + 100, buffer.Length).ToArray(), buffer);
     }
+
+    [Fact]
+    public void Decrypting_stream_reads_whole_sectors_across_region_edges_in_one_call()
+    {
+        using var dir = new TempDir();
+        var image = TestImage.Build();
+        using var disc = Ps3Disc.Open(image.Save(dir));
+        using var view = disc.OpenDecrypted(TestImage.Key);
+        var buffer = new byte[image.Plain.Length];
+        Assert.Equal(buffer.Length, view.ReadAtLeast(buffer, buffer.Length));
+        Assert.Equal(image.Plain, buffer);
+    }
+
+    [Fact]
+    public void Region_runs_end_at_the_next_region()
+    {
+        var table = RegionTable.TryParse(TestImage.Build().Plain.AsSpan(0, TestImage.S), TestImage.Sectors)!;
+        Assert.Equal((false, 29L), table.RunAt(0));
+        Assert.Equal((true, 49L), table.RunAt(30));
+        Assert.Equal((true, 49L), table.RunAt(49));
+        Assert.Equal((false, long.MaxValue), table.RunAt(50));
+        Assert.Equal((false, long.MaxValue), table.RunAt(1000));
+    }
+
+    [Theory]
+    [InlineData(TestImage.S)]        // one sector at a time
+    [InlineData(3 * TestImage.S)]    // chunks that straddle the region edges
+    [InlineData(7 * TestImage.S + 5)] // chunks that don't end on a sector
+    public void Converts_in_small_chunks_and_hands_over_the_source_bytes(int chunk)
+    {
+        using var dir = new TempDir();
+        var image = TestImage.Build();
+        var source = image.Save(dir);
+        var seen = new MemoryStream();
+        var output = dir.Combine("out.iso");
+        var result = Ps3Converter.ToDecryptedIso(source, output, TestImage.Key,
+            new Ps3Options { ChunkSize = chunk, SourceBytes = bytes => seen.Write(bytes) });
+        Assert.True(result.Verification!.Success);
+        Assert.Equal(image.Plain, File.ReadAllBytes(output));
+        Assert.Equal(image.Encrypted, seen.ToArray());
+
+        var back = dir.Combine("back.iso");
+        Ps3Converter.ToEncryptedIso(output, back, TestImage.Key, new Ps3Options { ChunkSize = chunk });
+        Assert.Equal(image.Encrypted, File.ReadAllBytes(back));
+    }
+
+    [Theory]
+    [InlineData(1, 4 << 20)]
+    [InlineData(1, TestImage.S)]
+    [InlineData(4, 4 << 20)]       // every file is small: all extracted side by side
+    [InlineData(4, TestImage.S)]   // BIG.DAT and EBOOT.BIN are large, the rest small
+    public void Extracts_a_jb_folder_in_chunks_and_in_parallel(int parallel, int chunk)
+    {
+        using var dir = new TempDir();
+        var image = TestImage.Build();
+        var folder = dir.Combine("Game");
+        var result = Ps3Converter.ToJbFolder(image.Save(dir), folder, TestImage.Key,
+            new Ps3Options { MaxParallelFiles = parallel, ChunkSize = chunk });
+        Assert.True(result.Verification!.Success);
+        foreach (var (path, data) in image.Files)
+            Assert.Equal(data, File.ReadAllBytes(Path.Combine(folder, path.Replace('/', Path.DirectorySeparatorChar))));
+        Assert.Equal(image.Files.Count, result.FilesWritten);
+    }
+
+    [Fact]
+    public void A_cancelled_parallel_extraction_leaves_nothing()
+    {
+        using var dir = new TempDir();
+        var image = TestImage.Build();
+        var folder = dir.Combine("Game");
+        using var cts = new CancellationTokenSource();
+        cts.Cancel();
+        Assert.ThrowsAny<OperationCanceledException>(() => Ps3Converter.ToJbFolder(image.Save(dir), folder, TestImage.Key,
+            new Ps3Options { MaxParallelFiles = 4 }, token: cts.Token));
+        Assert.False(Directory.Exists(folder + ".partial"));
+        Assert.False(Directory.Exists(folder));
+    }
 }

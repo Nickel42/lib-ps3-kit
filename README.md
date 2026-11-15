@@ -44,7 +44,7 @@ Console.WriteLine($"{result.TitleId} {result.Title}: {result.Verification?.Succe
 ps3-kit info    <image.iso> [--key HEX | --dkey FILE]
 ps3-kit ls      <image.iso>
 ps3-kit decrypt <image.iso> <out.iso>    [--key HEX | --dkey FILE] [--overwrite] [--no-verify]
-ps3-kit jb      <image.iso> <out-folder> [--key HEX | --dkey FILE] [--no-update] [--overwrite] [--no-verify]
+ps3-kit jb      <image.iso> <out-folder> [--key HEX | --dkey FILE] [--no-update] [--parallel N] [--overwrite] [--no-verify]
 ps3-kit encrypt <decrypted.iso> <out.iso> (--key HEX | --dkey FILE) [--overwrite] [--no-verify]
 ```
 
