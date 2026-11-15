@@ -252,4 +252,114 @@ public class Ps3KitTests
         Assert.False(Directory.Exists(folder + ".partial"));
         Assert.False(Directory.Exists(folder));
     }
+
+    /// <summary>A JB folder made from the test image, with extras: an empty file and folder, nested folders, odd names.</summary>
+    private static string JbFolder(TempDir dir, TestImage image, bool extras = true)
+    {
+        var folder = dir.Combine("Test Game");
+        Ps3Converter.ToJbFolder(image.Save(dir), folder, TestImage.Key);
+        if (extras)
+        {
+            Directory.CreateDirectory(Path.Combine(folder, "PS3_GAME", "USRDIR", "empty folder"));
+            Directory.CreateDirectory(Path.Combine(folder, "PS3_GAME", "USRDIR", "a", "b", "c"));
+            File.WriteAllBytes(Path.Combine(folder, "PS3_GAME", "USRDIR", "a", "b", "c", "deep.bin"), [1, 2, 3]);
+            File.WriteAllBytes(Path.Combine(folder, "PS3_GAME", "USRDIR", "zz_empty.dat"), []);
+            File.WriteAllText(Path.Combine(folder, "PS3_GAME", "USRDIR", "Lower case, spaces & Ünïcode — a rather long file name.txt"), "hello");
+        }
+        return folder;
+    }
+
+    /// <summary>Every file under <paramref name="folder"/>, by its path inside it ('/'-separated), with its bytes.</summary>
+    private static Dictionary<string, byte[]> FilesIn(string folder) =>
+        Directory.EnumerateFiles(folder, "*", SearchOption.AllDirectories)
+            .ToDictionary(f => Path.GetRelativePath(folder, f).Replace(Path.DirectorySeparatorChar, '/'), File.ReadAllBytes, StringComparer.Ordinal);
+
+    [Theory]
+    [InlineData(4 << 20, Iso9660Writer.DefaultMaxExtent)]
+    [InlineData(TestImage.S, 2 * TestImage.S)]          // small chunks; BIG.DAT and EBOOT.BIN in several extents
+    [InlineData(7 * TestImage.S + 5, TestImage.S)]      // chunks off the sector grid; every file a sector per extent
+    public void A_jb_folder_becomes_a_decrypted_iso_and_back(int chunk, long extent)
+    {
+        using var dir = new TempDir();
+        var image = TestImage.Build();
+        var folder = JbFolder(dir, image);
+        var iso = dir.Combine("Rebuilt.iso");
+        var result = Ps3Converter.FolderToIso(folder, iso, new Ps3Options { ChunkSize = chunk, MaxExtentSize = extent });
+        Assert.True(result.Verification!.Success);
+        Assert.Equal("BLUS12345", result.TitleId);
+        Assert.Equal("Test Game", result.Title);
+        Assert.False(File.Exists(iso + ".partial"));
+
+        using (var disc = Ps3Disc.Open(iso))
+        {
+            Assert.Equal(EncryptionState.NoEncryptedRegions, disc.State);
+            Assert.Equal("BLUS-12345", disc.DiscTitleId);
+            Assert.True(disc.FileSystem.IsJoliet);
+            Assert.Equal("PS3VOLUME", disc.FileSystem.VolumeId);
+            Assert.Equal("BLUS12345", disc.ReadParamSfo()!.TitleId);
+            Assert.Contains(disc.FileSystem.Entries(), e => e.Path == "PS3_GAME/USRDIR/empty folder" && e.IsDirectory);
+        }
+
+        var again = dir.Combine("Again");
+        Ps3Converter.ToJbFolder(iso, again, null);
+        Assert.Equal(FilesIn(folder), FilesIn(again));
+    }
+
+    [Fact]
+    public void The_primary_tree_has_upper_case_names_with_versions_and_the_same_files()
+    {
+        using var dir = new TempDir();
+        var folder = JbFolder(dir, TestImage.Build());
+        var iso = dir.Combine("Rebuilt.iso");
+        Ps3Converter.FolderToIso(folder, iso);
+        using var s = File.OpenRead(iso);
+        var primary = Iso9660Volume.TryOpen(s, preferJoliet: false)!;
+        Assert.False(primary.IsJoliet);
+        var eboot = primary.Find("PS3_GAME/USRDIR/EBOOT.BIN")!;
+        Assert.Equal(3000, eboot.Size);
+        Assert.NotNull(primary.Find("PS3_GAME/USRDIR/A/B/C/DEEP.BIN"));
+        Assert.Equal(FilesIn(folder).Count, primary.Entries().Count(e => !e.IsDirectory));
+    }
+
+    [Fact]
+    public void Folder_to_iso_can_leave_out_the_update()
+    {
+        using var dir = new TempDir();
+        var folder = JbFolder(dir, TestImage.Build(), extras: false);
+        var iso = dir.Combine("Rebuilt.iso");
+        Ps3Converter.FolderToIso(folder, iso, new Ps3Options { IncludeUpdate = false });
+        using var disc = Ps3Disc.Open(iso);
+        Assert.Null(disc.FileSystem.Find("PS3_UPDATE"));
+        Assert.NotNull(disc.FileSystem.Find("PS3_GAME/USRDIR/BIG.DAT"));
+    }
+
+    [Fact]
+    public void Folder_to_iso_refuses_what_it_cant_make()
+    {
+        using var dir = new TempDir();
+        var notGame = dir.Combine("Not a game");
+        Directory.CreateDirectory(notGame);
+        File.WriteAllText(Path.Combine(notGame, "readme.txt"), "hi");
+        Assert.Equal(Ps3Error.NotPs3Disc, Assert.Throws<Ps3Exception>(() => Ps3Converter.FolderToIso(notGame, dir.Combine("x.iso"))).Error);
+
+        var folder = JbFolder(dir, TestImage.Build(), extras: false);
+        Assert.Throws<ArgumentException>(() => Ps3Converter.FolderToIso(folder, Path.Combine(folder, "inside.iso")));
+
+        // Two names that are the same once made upper case for the primary tree.
+        File.WriteAllText(Path.Combine(folder, "PS3_GAME", "USRDIR", "x y.txt"), "1");
+        File.WriteAllText(Path.Combine(folder, "PS3_GAME", "USRDIR", "x_y.txt"), "2");
+        Assert.Equal(Ps3Error.BadFilesystem, Assert.Throws<Ps3Exception>(() => Ps3Converter.FolderToIso(folder, dir.Combine("y.iso"))).Error);
+        Assert.False(File.Exists(dir.Combine("y.iso.partial")));
+
+        File.Delete(Path.Combine(folder, "PS3_GAME", "USRDIR", "x_y.txt"));
+        Ps3Converter.FolderToIso(folder, dir.Combine("z.iso"));
+        Assert.Equal(Ps3Error.OutputExists, Assert.Throws<Ps3Exception>(() => Ps3Converter.FolderToIso(folder, dir.Combine("z.iso"))).Error);
+    }
+
+    [Theory]
+    [InlineData("BLUS30443", "BLUS-30443")]
+    [InlineData("BLUS-30443", "BLUS-30443")]
+    [InlineData(" NPEB01234 ", "NPEB-01234")]
+    [InlineData("", null)]
+    public void Title_ids_get_their_dash(string id, string? expected) => Assert.Equal(expected, Ps3Converter.DiscTitleId(id));
 }

@@ -32,6 +32,9 @@ public sealed record Ps3Options
 
     /// <summary>How much is read at a time (and the size up to which a file counts as small). Tests make it tiny.</summary>
     internal int ChunkSize { get; init; } = 4 << 20;
+
+    /// <summary><see cref="Ps3Converter.FolderToIso"/>: the most a file's extent holds before the next starts. Tests make it tiny.</summary>
+    internal long MaxExtentSize { get; init; } = Iso9660Writer.DefaultMaxExtent;
 }
 
 /// <summary>Receives a source image's bytes as stored (see <see cref="Ps3Options.SourceBytes"/>).</summary>
@@ -50,9 +53,10 @@ public sealed record Ps3Result(string Output, long BytesWritten, int FilesWritte
 /// <item><see cref="ToDecryptedIso"/>: a Redump image becomes a decrypted ISO (same size and layout; RPCS3 loads it).</item>
 /// <item><see cref="ToJbFolder"/>: the disc's files in a folder (PS3_DISC.SFB, PS3_GAME/…), the "JB" layout.</item>
 /// <item><see cref="ToEncryptedIso"/>: a decrypted ISO back to the Redump image, byte for byte.</item>
+/// <item><see cref="FolderToIso"/>: a JB folder back into a decrypted ISO (nothing encrypted; RPCS3 loads it).</item>
 /// </list>
 /// </summary>
-public static class Ps3Converter
+public static partial class Ps3Converter
 {
     private const int BufferSize = 1 << 20;
 

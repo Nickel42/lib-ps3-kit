@@ -1,6 +1,6 @@
 # lib-ps3-kit
 
-A dependency-free C# library for PlayStation 3 disc images. It reads a Redump ISO's region table and decrypts the image with its disc key (`.dkey`), either into a **decrypted ISO** (same size and layout, which RPCS3 loads) or into a **JB folder** (`PS3_DISC.SFB`, `PS3_GAME/…`). It checks each result, and can re-encrypt a decrypted ISO back to the Redump image byte for byte. No native code, no package dependencies.
+A dependency-free C# library for PlayStation 3 disc images. It reads a Redump ISO's region table and decrypts the image with its disc key (`.dkey`), either into a **decrypted ISO** (same size and layout, which RPCS3 loads) or into a **JB folder** (`PS3_DISC.SFB`, `PS3_GAME/…`). It can also make a JB folder back into a decrypted ISO. It checks each result, and can re-encrypt a decrypted ISO back to the Redump image byte for byte. No native code, no package dependencies.
 
 | Package | What it is |
 |---|---|
@@ -18,6 +18,7 @@ It targets `net8.0` and `net10.0` and is marked trim- and AOT-compatible.
 | Key check | `KeyFits` decrypts those files' first sector and checks their header, so a wrong key fails before anything is written |
 | Decrypted ISO | `Ps3Converter.ToDecryptedIso` |
 | JB folder | `Ps3Converter.ToJbFolder`, optionally without `PS3_UPDATE` |
+| Folder to ISO | `Ps3Converter.FolderToIso`: a JB folder back into a decrypted ISO (ISO 9660 + Joliet, files over 4 GiB in several extents), checked by reading every file back |
 | Re-encrypt | `Ps3Converter.ToEncryptedIso` gives back the Redump image exactly |
 | Verify | The output is read back and compared with the SHA-1 of what was written; a decrypted output must no longer look encrypted, and a JB folder's `EBOOT.BIN` must be a decrypted SELF |
 | Safety | Output is written to `<output>.partial` and renamed only once checked; unsafe names on the disc (`..`, separators) are refused |
@@ -46,6 +47,7 @@ ps3-kit ls      <image.iso>
 ps3-kit decrypt <image.iso> <out.iso>    [--key HEX | --dkey FILE] [--overwrite] [--no-verify]
 ps3-kit jb      <image.iso> <out-folder> [--key HEX | --dkey FILE] [--no-update] [--parallel N] [--overwrite] [--no-verify]
 ps3-kit encrypt <decrypted.iso> <out.iso> (--key HEX | --dkey FILE) [--overwrite] [--no-verify]
+ps3-kit iso     <jb-folder> <out.iso>    [--no-update] [--overwrite] [--no-verify]
 ```
 
 ## How the image is laid out

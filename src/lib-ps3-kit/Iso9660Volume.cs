@@ -48,7 +48,10 @@ public sealed class Iso9660Volume
     }
 
     /// <summary>Opens the filesystem on <paramref name="stream"/>, or returns null when it has none.</summary>
-    public static Iso9660Volume? TryOpen(Stream stream)
+    public static Iso9660Volume? TryOpen(Stream stream) => TryOpen(stream, preferJoliet: true);
+
+    /// <summary>Opens the filesystem's Joliet tree when there is one and <paramref name="preferJoliet"/>, else its primary tree.</summary>
+    internal static Iso9660Volume? TryOpen(Stream stream, bool preferJoliet)
     {
         var sector = new byte[SectorSize];
         (long, long)? primary = null, joliet = null;
@@ -68,6 +71,7 @@ public sealed class Iso9660Volume
                 joliet ??= RootOf(sector);
         }
         if (primary is null) return null;
+        if (!preferJoliet) joliet = null;
         return new Iso9660Volume(stream, joliet is not null, joliet ?? primary.Value, volumeId);
     }
 
