@@ -61,15 +61,17 @@ public sealed class Ps3DiscStream : Stream
             var sector = _position / SectorSize;
             var within = (int)(_position % SectorSize);
 
-            // Whole sectors that need no transform are read straight into the caller's buffer.
-            if (within == 0 && buffer.Length >= SectorSize && !NeedsTransform(sector))
+            // Whole sectors are read straight into the caller's buffer and transformed there, as many as fit.
+            if (within == 0 && buffer.Length >= SectorSize)
             {
-                var run = PlainRun(sector, Math.Min(buffer.Length, length - _position) / SectorSize);
-                if (run > 0)
+                var whole = (int)(Math.Min(buffer.Length, length - _position) / SectorSize);
+                if (whole > 0)
                 {
+                    var bytes = whole * SectorSize;
                     _inner.Position = _position;
-                    var read = _inner.ReadAtLeast(buffer[..(int)(run * SectorSize)], (int)(run * SectorSize), throwOnEndOfStream: false);
+                    var read = _inner.ReadAtLeast(buffer[..bytes], bytes, throwOnEndOfStream: false);
                     if (read == 0) break;
+                    TransformInPlace(_position, buffer[..read]);
                     _position += read;
                     total += read;
                     buffer = buffer[read..];
@@ -90,13 +92,31 @@ public sealed class Ps3DiscStream : Stream
 
     private bool NeedsTransform(long sector) => _cipher is not null && _regions.IsEncrypted(sector);
 
-    /// <summary>How many sectors from <paramref name="sector"/> on (at most <paramref name="max"/>) pass through unchanged.</summary>
-    private long PlainRun(long sector, long max)
+    /// <summary>
+    /// Transforms, in place, the image's bytes from <paramref name="offset"/> (a sector boundary) held in
+    /// <paramref name="data"/>: each whole sector in an encrypted region. A trailing part sector (only at the image's
+    /// end) is left as it is, as a single-sector read leaves it. Not for two threads at once.
+    /// </summary>
+    internal void TransformInPlace(long offset, Span<byte> data)
     {
-        if (_cipher is null) return max;
-        long n = 0;
-        while (n < max && !_regions.IsEncrypted(sector + n)) n++;
-        return n;
+        if (_cipher is null) return;
+        if (offset % SectorSize != 0) throw new ArgumentException("The offset must be on a sector boundary.", nameof(offset));
+        var sector = offset / SectorSize;
+        var sectors = data.Length / SectorSize;
+        var i = 0;
+        while (i < sectors)
+        {
+            var (encrypted, runEnd) = _regions.RunAt(sector + i);
+            var run = (int)Math.Min(sectors - i, runEnd - (sector + i) + 1);
+            if (encrypted)
+                for (var k = i; k < i + run; k++)
+                {
+                    var slice = data.Slice(k * SectorSize, SectorSize);
+                    if (_transform == SectorTransform.Decrypt) _cipher.Decrypt(sector + k, slice);
+                    else _cipher.Encrypt(sector + k, slice);
+                }
+            i += run;
+        }
     }
 
     /// <summary>Reads (and transforms) one sector into the cache; returns how many bytes of it the image holds.</summary>

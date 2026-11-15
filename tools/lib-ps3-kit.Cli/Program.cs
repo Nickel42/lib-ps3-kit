@@ -10,7 +10,7 @@ internal static class Cli
           ps3-kit info    <image.iso> [--key HEX | --dkey FILE]
           ps3-kit ls      <image.iso>
           ps3-kit decrypt <image.iso> <out.iso>   [--key HEX | --dkey FILE] [--overwrite] [--no-verify]
-          ps3-kit jb      <image.iso> <out-folder> [--key HEX | --dkey FILE] [--no-update] [--overwrite] [--no-verify]
+          ps3-kit jb      <image.iso> <out-folder> [--key HEX | --dkey FILE] [--no-update] [--parallel N] [--overwrite] [--no-verify]
           ps3-kit encrypt <decrypted.iso> <out.iso> (--key HEX | --dkey FILE) [--overwrite] [--no-verify]
 
         Without --key or --dkey, <image>.dkey (or .key) beside the image is used when there is one.
@@ -32,6 +32,7 @@ internal static class Cli
                 Overwrite = args.Contains("--overwrite"),
                 Verify = !args.Contains("--no-verify"),
                 IncludeUpdate = !args.Contains("--no-update"),
+                MaxParallelFiles = Value(args, "--parallel") is { } p ? int.Parse(p) : 1,
             };
             var progress = new Progress<OperationProgress>(p =>
             {
@@ -59,7 +60,7 @@ internal static class Cli
         }
     }
 
-    private static bool IsOptionValue(string[] args, int i) => i > 0 && args[i - 1] is "--key" or "--dkey";
+    private static bool IsOptionValue(string[] args, int i) => i > 0 && args[i - 1] is "--key" or "--dkey" or "--parallel";
 
     private static string? Value(string[] args, string name)
     {

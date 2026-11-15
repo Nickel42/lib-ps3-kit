@@ -53,6 +53,25 @@ public sealed class RegionTable
     }
 
     /// <summary>
+    /// Whether <paramref name="sector"/> is encrypted, and the last sector of the run it starts that is the same
+    /// (encrypted or plain), so a reader can take the whole run at once. Past the table, everything is plain.
+    /// </summary>
+    internal (bool Encrypted, long RunEnd) RunAt(long sector)
+    {
+        int lo = 0, hi = _encrypted.Length - 1;
+        while (lo <= hi)
+        {
+            var mid = (lo + hi) >>> 1;
+            var r = _encrypted[mid];
+            if (sector < r.FirstSector) hi = mid - 1;
+            else if (sector > r.LastSector) lo = mid + 1;
+            else return (true, r.LastSector);
+        }
+        // Plain up to the next encrypted region (lo is the first one that starts after the sector).
+        return (false, lo < _encrypted.Length ? _encrypted[lo].FirstSector - 1 : long.MaxValue);
+    }
+
+    /// <summary>
     /// Parses sector 0. Returns null when it doesn't hold a valid table (not a PS3 image): the count is 0 or
     /// implausible, or the sector numbers don't rise.
     /// </summary>
