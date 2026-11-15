@@ -12,6 +12,7 @@ internal static class Cli
           ps3-kit decrypt <image.iso> <out.iso>   [--key HEX | --dkey FILE] [--overwrite] [--no-verify]
           ps3-kit jb      <image.iso> <out-folder> [--key HEX | --dkey FILE] [--no-update] [--parallel N] [--overwrite] [--no-verify]
           ps3-kit encrypt <decrypted.iso> <out.iso> (--key HEX | --dkey FILE) [--overwrite] [--no-verify]
+          ps3-kit iso     <jb-folder> <out.iso>   [--no-update] [--overwrite] [--no-verify]
 
         Without --key or --dkey, <image>.dkey (or .key) beside the image is used when there is one.
         """;
@@ -43,6 +44,7 @@ internal static class Cli
                 case "info": return Info(Arg(0), KeyFor(args, Arg(0)));
                 case "ls": return List(Arg(0));
                 case "decrypt": return Done(Ps3Converter.ToDecryptedIso(Arg(0), Arg(1), KeyFor(args, Arg(0)), options, progress));
+                case "iso": return Done(Ps3Converter.FolderToIso(Arg(0), Arg(1), options, progress));
                 case "jb": return Done(Ps3Converter.ToJbFolder(Arg(0), Arg(1), KeyFor(args, Arg(0)), options, progress));
                 case "encrypt":
                     var key = KeyFor(args, Arg(0)) ?? throw new ArgumentException("encrypt needs --key or --dkey.");
