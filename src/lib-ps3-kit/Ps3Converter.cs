@@ -170,7 +170,7 @@ public static partial class Ps3Converter
                     token.ThrowIfCancellationRequested();
                     using var input = Iso9660Volume.OpenFile(local.View, entry);
                     var n = input.ReadAtLeast(local.Buffer.AsSpan(0, (int)entry.Size), (int)entry.Size, throwOnEndOfStream: false);
-                    using (var outFile = CreateOutput(SafeJoin(partial, entry.Path), n))
+                    using (var outFile = CreateOutput(SafeJoin(partial, entry.Path), n, oneWrite: true))
                         outFile.Write(local.Buffer, 0, n);
                     hashes[entry.Path] = SHA1.HashData(local.Buffer.AsSpan(0, n));
                     advance(n, entry.Path);
@@ -185,13 +185,16 @@ public static partial class Ps3Converter
         }
     }
 
-    /// <summary>A new output file, sized up front, unbuffered (the writes are whole chunks).</summary>
-    private static FileStream CreateOutput(string path, long size)
+    /// <summary>
+    /// A new output file, unbuffered (the writes are whole chunks), sized up front when it's written a chunk at a
+    /// time; a file written in one go sizes itself, and setting its length first is one more call per small file.
+    /// </summary>
+    private static FileStream CreateOutput(string path, long size, bool oneWrite = false)
     {
         var s = new FileStream(path, FileMode.CreateNew, FileAccess.Write, FileShare.None, bufferSize: 0);
         try
         {
-            s.SetLength(size);
+            if (!oneWrite) s.SetLength(size);
             return s;
         }
         catch
