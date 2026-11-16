@@ -58,8 +58,6 @@ public sealed record Ps3Result(string Output, long BytesWritten, int FilesWritte
 /// </summary>
 public static partial class Ps3Converter
 {
-    private const int BufferSize = 1 << 20;
-
     public static Ps3Result ToDecryptedIso(string source, string output, DiscKey? key, Ps3Options? options = null,
         IProgress<OperationProgress>? progress = null, CancellationToken token = default)
     {
@@ -136,7 +134,7 @@ public static partial class Ps3Converter
             Ps3Verification? verification = null;
             if (options.Verify)
             {
-                verification = VerifyFolder(partial, entries, hashes, report, token);
+                verification = VerifyFolder(partial, entries, hashes, options, report, token);
                 if (!verification.Success) throw new Ps3Exception(Ps3Error.VerifyFailed, "The folder failed its check: " + string.Join("; ", verification.Problems));
             }
             if (Directory.Exists(final)) Directory.Delete(final, recursive: true);
@@ -316,7 +314,7 @@ public static partial class Ps3Converter
             Ps3Verification? verification = null;
             if (options.Verify)
             {
-                verification = VerifyImage(partial, written, verifyDecrypted, report, token);
+                verification = VerifyImage(partial, written, verifyDecrypted, options, report, token);
                 if (!verification.Success) throw new Ps3Exception(Ps3Error.VerifyFailed, "The new image failed its check: " + string.Join("; ", verification.Problems));
             }
             if (File.Exists(final)) File.Delete(final);
@@ -335,68 +333,6 @@ public static partial class Ps3Converter
             TryDelete(partial, isFolder: false);
             throw;
         }
-    }
-
-    private static Ps3Verification VerifyImage(string path, byte[] written, bool decrypted, IProgress<OperationProgress> report, CancellationToken token)
-    {
-        var problems = new List<string>();
-        using (var s = new FileStream(path, FileMode.Open, FileAccess.Read, FileShare.Read, 0, FileOptions.SequentialScan))
-        {
-            if (!HashOf(s, new byte[BufferSize], s.Length, report, token).AsSpan().SequenceEqual(written)) problems.Add("it doesn't read back as written");
-        }
-        if (decrypted)
-        {
-            using var disc = Ps3Disc.Open(path);
-            if (disc.State == EncryptionState.Encrypted) problems.Add("its files still look encrypted");
-        }
-        return new Ps3Verification(problems.Count == 0, problems);
-    }
-
-    private static Ps3Verification VerifyFolder(string root, List<IsoEntry> entries, IReadOnlyDictionary<string, byte[]> hashes,
-        IProgress<OperationProgress> report, CancellationToken token)
-    {
-        var problems = new List<string>();
-        var buffer = new byte[BufferSize];
-        long total = entries.Where(e => !e.IsDirectory).Sum(e => e.Size), done = 0;
-        foreach (var entry in entries)
-        {
-            var path = SafeJoin(root, entry.Path);
-            if (entry.IsDirectory)
-            {
-                if (!Directory.Exists(path)) problems.Add($"{entry.Path} is missing");
-                continue;
-            }
-            var info = new FileInfo(path);
-            if (!info.Exists || info.Length != entry.Size) { problems.Add($"{entry.Path} is missing or the wrong size"); continue; }
-            using var s = new FileStream(path, FileMode.Open, FileAccess.Read, FileShare.Read, 0, FileOptions.SequentialScan);
-            var hash = HashOf(s, buffer, total, report, token, done);
-            done += entry.Size;
-            if (!hash.AsSpan().SequenceEqual(hashes[entry.Path])) problems.Add($"{entry.Path} doesn't read back as written");
-        }
-        var eboot = SafeJoin(root, "PS3_GAME/USRDIR/EBOOT.BIN");
-        if (File.Exists(eboot))
-        {
-            var head = new byte[4];
-            using var s = File.OpenRead(eboot);
-            if (s.ReadAtLeast(head, 4, throwOnEndOfStream: false) < 4 || !head.AsSpan().SequenceEqual("SCE\0"u8))
-                problems.Add("PS3_GAME/USRDIR/EBOOT.BIN isn't a decrypted SELF");
-        }
-        return new Ps3Verification(problems.Count == 0, problems.Take(20).ToList());
-    }
-
-    private static byte[] HashOf(Stream s, byte[] buffer, long total, IProgress<OperationProgress> report, CancellationToken token, long doneBefore = 0)
-    {
-        using var sha = IncrementalHash.CreateHash(HashAlgorithmName.SHA1);
-        long done = doneBefore;
-        int n;
-        while ((n = s.Read(buffer)) > 0)
-        {
-            token.ThrowIfCancellationRequested();
-            sha.AppendData(buffer, 0, n);
-            done += n;
-            report.Report(new(OperationStage.Verifying, done, total));
-        }
-        return sha.GetHashAndReset();
     }
 
     private static ParamSfo? ReadSfo(Iso9660Volume fs)

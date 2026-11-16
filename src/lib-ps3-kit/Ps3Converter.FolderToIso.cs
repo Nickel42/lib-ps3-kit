@@ -56,7 +56,7 @@ public static partial class Ps3Converter
             Ps3Verification? verification = null;
             if (options.Verify)
             {
-                verification = VerifyBuilt(partial, layout, hashes, titleId, report, token);
+                verification = VerifyBuilt(partial, layout, hashes, titleId, options, report, token);
                 if (!verification.Success) throw new Ps3Exception(Ps3Error.VerifyFailed, "The new image failed its check: " + string.Join("; ", verification.Problems));
             }
             if (File.Exists(final)) File.Delete(final);
@@ -111,7 +111,7 @@ public static partial class Ps3Converter
 
     /// <summary>Reads the new image back: both trees list the folder's files at their sizes, and every file hashes as written.</summary>
     private static Ps3Verification VerifyBuilt(string path, IsoLayout layout, Dictionary<IsoNode, byte[]> hashes, string? titleId,
-        IProgress<OperationProgress> report, CancellationToken token)
+        Ps3Options options, IProgress<OperationProgress> report, CancellationToken token)
     {
         var problems = new List<string>();
         using var disc = Ps3Disc.Open(path);
@@ -129,13 +129,13 @@ public static partial class Ps3Converter
         if (problems.Count > 0) return new(false, problems.Take(20).ToList());
 
         var entries = joliet.Entries().Where(e => !e.IsDirectory).ToDictionary(e => e.Path, StringComparer.Ordinal);
-        var buffer = new byte[BufferSize];
+        byte[] a = new byte[options.ChunkSize], b = new byte[options.ChunkSize];
         long total = layout.Files.Sum(f => f.Size), done = 0;
         foreach (var file in layout.Files)
         {
+            token.ThrowIfCancellationRequested();
             using var s = Iso9660Volume.OpenFile(view, entries[file.DiscPath]);
-            var hash = HashOf(s, buffer, total, report, token, done);
-            done += file.Size;
+            var hash = HashOf(s, file.Size, a, b, n => report.Report(new(OperationStage.Verifying, done += n, total)), token);
             if (!hash.AsSpan().SequenceEqual(hashes[file])) problems.Add($"{file.DiscPath} doesn't read back as written");
         }
         return new Ps3Verification(problems.Count == 0, problems.Take(20).ToList());
