@@ -18,6 +18,8 @@ public static partial class Ps3Converter
     {
         private readonly long _length = layout.TotalSectors * RegionTable.SectorSize;
         private readonly Dictionary<int, Task<byte[]>> _ahead = [];
+        // Twice as many files are kept on the way as are read at once, so the next is ready when one is used up.
+        private readonly SemaphoreSlim _reading = new(Math.Max(1, parallel));
         private List<FileSegment> _segments = [];
         private long _position;
         private int _file = -1;  // the file being read, by index in layout.Files
@@ -122,7 +124,14 @@ public static partial class Ps3Converter
             {
                 var index = _nextAhead++;
                 var f = layout.Files[index];
-                if (f.Size > 0 && f.Size <= smallUpTo) _ahead[index] = Task.Run(() => ReadWhole(f));
+                if (f.Size > 0 && f.Size <= smallUpTo)
+                    _ahead[index] = Task.Run(async () =>
+                    {
+                        // No more than parallel files read at once, however many are on the way.
+                        await _reading.WaitAsync().ConfigureAwait(false);
+                        try { return ReadWhole(f); }
+                        finally { _reading.Release(); }
+                    });
             }
         }
 
@@ -176,6 +185,7 @@ public static partial class Ps3Converter
                     catch (Exception) { }
                 }
                 _ahead.Clear();
+                _reading.Dispose();
             }
             base.Dispose(disposing);
         }
