@@ -22,6 +22,52 @@ public class FastPathTests
     }
 
     [Theory]
+    [InlineData(4 << 20)]          // every file small: all read ahead
+    [InlineData(TestImage.S)]      // EBOOT.BIN and BIG.DAT large, read in turn between small ones read ahead
+    [InlineData(7 * TestImage.S + 5)]
+    public void A_folder_makes_the_same_iso_reading_small_files_ahead(int chunk)
+    {
+        using var dir = new TempDir();
+        var image = TestImage.Build();
+        var folder = dir.Combine("Game");
+        Ps3Converter.ToJbFolder(image.Save(dir), folder, TestImage.Key);
+        var usr = Path.Combine(folder, "PS3_GAME", "USRDIR");
+        File.WriteAllBytes(Path.Combine(usr, "empty.dat"), []);
+        for (var i = 0; i < 40; i++) File.WriteAllBytes(Path.Combine(usr, $"f{i:00}.bin"), Enumerable.Range(0, 37 * i + 1).Select(b => (byte)(b ^ i)).ToArray());
+        var made = new DateTime(2026, 11, 16, 12, 0, 0, DateTimeKind.Utc);
+
+        byte[] Make(int parallel, string name)
+        {
+            var iso = dir.Combine(name);
+            var result = Ps3Converter.FolderToIso(folder, iso, new Ps3Options { ChunkSize = chunk, MaxParallelFiles = parallel, MadeAt = made });
+            Assert.True(result.Verification!.Success);
+            return File.ReadAllBytes(iso);
+        }
+        Assert.Equal(Make(1, "one.iso"), Make(4, "four.iso"));
+    }
+
+    [Theory]
+    [InlineData(1)]
+    [InlineData(4)]
+    public void A_file_shorter_than_it_was_measured_stops_the_image(int parallel)
+    {
+        using var dir = new TempDir();
+        var now = DateTime.UtcNow;
+        var root = new IsoNode { Name = "", Source = dir.Path, DiscPath = "", IsDirectory = true, Time = now };
+        for (var i = 0; i < 6; i++)
+        {
+            var path = dir.Combine($"F{i}.BIN");
+            File.WriteAllBytes(path, new byte[100]);
+            // The third says it holds more than it does, as if it was cut short after the folder was scanned.
+            root.Children.Add(new IsoNode { Name = $"F{i}.BIN", Source = path, DiscPath = $"F{i}.BIN", Size = i == 2 ? 200 : 100, Time = now });
+        }
+        var layout = Iso9660Writer.Build(root, null, Iso9660Writer.DefaultMaxExtent, now);
+        using var image = new Ps3Converter.FolderImageStream(layout, parallel, 4 << 20);
+        var e = Assert.Throws<IOException>(() => image.CopyTo(Stream.Null));
+        Assert.Contains("F2.BIN got shorter", e.Message);
+    }
+
+    [Theory]
     [InlineData(4 << 20)]     // every file small
     [InlineData(TestImage.S)] // EBOOT.BIN and BIG.DAT large, read a chunk at a time
     public void Checking_a_jb_folder_finds_the_same_problems_in_the_same_order_one_or_several_at_a_time(int chunk)

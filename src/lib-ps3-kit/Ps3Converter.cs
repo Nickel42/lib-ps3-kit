@@ -25,8 +25,9 @@ public sealed record Ps3Options
     public SourceBytesHandler? SourceBytes { get; init; }
 
     /// <summary>
-    /// JB folder: how many small files are extracted at once. 1 (the default) takes every file in disc order, which
-    /// suits a hard drive; 4 or so is much faster on an SSD, where opening and closing each file is the slow part.
+    /// JB folder: how many small files are extracted (and read back) at once; <see cref="Ps3Converter.FolderToIso"/>: how
+    /// many small files are read ahead at once. 1 (the default) takes every file in disc order, which suits a hard
+    /// drive; 4 or so is much faster on an SSD, where opening and closing each file is the slow part.
     /// </summary>
     public int MaxParallelFiles { get; init; } = 1;
 
@@ -35,6 +36,9 @@ public sealed record Ps3Options
 
     /// <summary><see cref="Ps3Converter.FolderToIso"/>: the most a file's extent holds before the next starts. Tests make it tiny.</summary>
     internal long MaxExtentSize { get; init; } = Iso9660Writer.DefaultMaxExtent;
+
+    /// <summary><see cref="Ps3Converter.FolderToIso"/>: the time the image says it was made; now when null. Tests fix it.</summary>
+    internal DateTime? MadeAt { get; init; }
 }
 
 /// <summary>Receives a source image's bytes as stored (see <see cref="Ps3Options.SourceBytes"/>).</summary>

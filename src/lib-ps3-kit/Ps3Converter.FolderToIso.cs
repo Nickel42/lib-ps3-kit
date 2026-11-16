@@ -30,7 +30,7 @@ public static partial class Ps3Converter
         if (final.StartsWith(inside, StringComparison.OrdinalIgnoreCase))
             throw new ArgumentException("The ISO can't go inside the folder it's made from.", nameof(output));
         var root = Scan(source, options.IncludeUpdate, token);
-        var layout = Iso9660Writer.Build(root, titleId, options.MaxExtentSize, DateTime.UtcNow);
+        var layout = Iso9660Writer.Build(root, titleId, options.MaxExtentSize, options.MadeAt ?? DateTime.UtcNow);
         PrepareOutput(final, options.Overwrite, isFolder: false);
         var partial = final + ".partial";
         var total = layout.TotalSectors * RegionTable.SectorSize;
@@ -39,12 +39,30 @@ public static partial class Ps3Converter
             // Empty files have no data to read; their hash is the empty one.
             var hashes = layout.Files.Where(f => f.Size == 0).ToDictionary(f => f, _ => SHA1.HashData(ReadOnlySpan<byte>.Empty));
             if (File.Exists(partial)) File.Delete(partial);
-            using (var image = new FolderImageStream(layout, hashes))
+            using (var image = new FolderImageStream(layout, Math.Max(1, options.MaxParallelFiles), options.ChunkSize))
+            using (var sha = IncrementalHash.CreateHash(HashAlgorithmName.SHA1))
             using (var outFile = CreateOutput(partial, total))
             {
-                long done = 0;
-                Pump(image, new byte[options.ChunkSize], new byte[options.ChunkSize], null,
-                    (chunk, n) => outFile.Write(chunk, 0, n),
+                long done = 0, offset = 0;
+                // Each chunk's file segments, taken on the reading thread once the chunk before is done with, so the
+                // consumer (started after) sees them. The files are hashed there, while the chunk is written.
+                List<FileSegment> segments = [];
+                Pump(image, new byte[options.ChunkSize], new byte[options.ChunkSize], (_, _) => segments = image.TakeSegments(),
+                    (chunk, n) =>
+                    {
+                        var (these, at) = (segments, offset);
+                        offset += n;
+                        var write = Task.Run(() => outFile.Write(chunk, 0, n));
+                        try
+                        {
+                            foreach (var s in these)
+                            {
+                                sha.AppendData(chunk, (int)(s.At - at), s.Length);
+                                if (s.Last) hashes[layout.Files[s.File]] = sha.GetHashAndReset();
+                            }
+                        }
+                        finally { write.GetAwaiter().GetResult(); }
+                    },
                     n =>
                     {
                         done += n;
@@ -151,106 +169,5 @@ public static partial class Ps3Converter
             if (!seen.TryGetValue(p, out var e) || !e.IsDirectory) problems.Add($"the folder {p} is missing from the {tree} tree");
         var extra = found.Count - files.Count - folders.Count();
         if (extra != 0) problems.Add($"the {tree} tree lists {found.Count} entries, not {files.Count + folders.Count()}");
-    }
-
-    /// <summary>
-    /// The new image's bytes front to back: the metadata, then each file at its sector with zeros up to the next.
-    /// Each file is hashed as it's read, and must be the size it was when the folder was scanned.
-    /// </summary>
-    private sealed class FolderImageStream(IsoLayout layout, Dictionary<IsoNode, byte[]> hashes) : Stream
-    {
-        private readonly long _length = layout.TotalSectors * RegionTable.SectorSize;
-        private long _position;
-        private int _file = -1; // the file being read, by index in layout.Files
-        private FileStream? _input;
-        private IncrementalHash? _sha;
-
-        /// <summary>The file being read, for progress.</summary>
-        public string? Current => _file >= 0 && _file < layout.Files.Count ? layout.Files[_file].DiscPath : null;
-
-        public override int Read(byte[] buffer, int offset, int count) => Read(buffer.AsSpan(offset, count));
-
-        public override int Read(Span<byte> buffer)
-        {
-            var total = 0;
-            while (buffer.Length > 0 && _position < _length)
-            {
-                int n;
-                if (_position < layout.Metadata.Length)
-                {
-                    n = (int)Math.Min(buffer.Length, layout.Metadata.Length - _position);
-                    layout.Metadata.AsSpan((int)_position, n).CopyTo(buffer);
-                }
-                else
-                {
-                    var next = NextData();
-                    if (next is null || _position < next.Value.Start)
-                    {
-                        // Zeros: the end of a file's last sector, or up to the image's end.
-                        var upTo = next?.Start ?? _length;
-                        n = (int)Math.Min(buffer.Length, upTo - _position);
-                        buffer[..n].Clear();
-                    }
-                    else
-                    {
-                        var (start, file) = next.Value;
-                        n = (int)Math.Min(buffer.Length, start + file.Size - _position);
-                        _input ??= new FileStream(file.Source, FileMode.Open, FileAccess.Read, FileShare.Read, 0, FileOptions.SequentialScan);
-                        _sha ??= IncrementalHash.CreateHash(HashAlgorithmName.SHA1);
-                        if (_input.ReadAtLeast(buffer[..n], n, throwOnEndOfStream: false) < n)
-                            throw new IOException($"{file.DiscPath} got shorter while the image was being made.");
-                        _sha.AppendData(buffer[..n]);
-                        if (_position + n == start + file.Size) FinishFile();
-                    }
-                }
-                _position += n;
-                total += n;
-                buffer = buffer[n..];
-            }
-            return total;
-        }
-
-        /// <summary>The file whose data comes next (its first byte's offset), skipping empty ones.</summary>
-        private (long Start, IsoNode File)? NextData()
-        {
-            if (_input is not null) return (layout.Files[_file].Sector * RegionTable.SectorSize, layout.Files[_file]);
-            while (_file + 1 < layout.Files.Count)
-            {
-                var f = layout.Files[_file + 1];
-                var start = f.Sector * RegionTable.SectorSize;
-                if (f.Size == 0) { _file++; continue; }
-                if (_position < start) return (start, f);
-                _file++;
-                return (start, f);
-            }
-            return null;
-        }
-
-        private void FinishFile()
-        {
-            hashes[layout.Files[_file]] = _sha!.GetHashAndReset();
-            _input!.Dispose();
-            _input = null;
-        }
-
-        public override bool CanRead => true;
-        public override bool CanSeek => false;
-        public override bool CanWrite => false;
-        public override long Length => _length;
-        public override long Position { get => _position; set => throw new NotSupportedException(); }
-        public override void Flush() { }
-        public override long Seek(long offset, SeekOrigin origin) => throw new NotSupportedException();
-        public override void SetLength(long value) => throw new NotSupportedException();
-        public override void Write(byte[] buffer, int offset, int count) => throw new NotSupportedException();
-
-        protected override void Dispose(bool disposing)
-        {
-            if (disposing)
-            {
-                _input?.Dispose();
-                _sha?.Dispose();
-            }
-            base.Dispose(disposing);
-        }
     }
 }
