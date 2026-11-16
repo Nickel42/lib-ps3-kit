@@ -108,13 +108,12 @@ public sealed class Ps3DiscStream : Stream
         {
             var (encrypted, runEnd) = _regions.RunAt(sector + i);
             var run = (int)Math.Min(sectors - i, runEnd - (sector + i) + 1);
-            if (encrypted)
+            // Decrypting takes a whole run per call into AES; CBC encryption chains block to block, so it goes a sector at a time.
+            if (encrypted && _transform == SectorTransform.Decrypt)
+                _cipher.DecryptRun(sector + i, data.Slice(i * SectorSize, run * SectorSize));
+            else if (encrypted)
                 for (var k = i; k < i + run; k++)
-                {
-                    var slice = data.Slice(k * SectorSize, SectorSize);
-                    if (_transform == SectorTransform.Decrypt) _cipher.Decrypt(sector + k, slice);
-                    else _cipher.Encrypt(sector + k, slice);
-                }
+                    _cipher.Encrypt(sector + k, data.Slice(k * SectorSize, SectorSize));
             i += run;
         }
     }
