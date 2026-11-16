@@ -47,6 +47,37 @@ public class FastPathTests
     }
 
     [Theory]
+    [InlineData(1, 4 << 20)]
+    [InlineData(4, 4 << 20)]
+    [InlineData(4, 3000)] // some files larger than what is read ahead
+    public void The_image_stream_is_the_metadata_then_each_file_at_its_sector(int parallel, int smallUpTo)
+    {
+        // A reference built by hand: the metadata, then each file's bytes at its sector, zeros everywhere else.
+        using var dir = new TempDir();
+        var now = new DateTime(2026, 11, 16, 12, 0, 0, DateTimeKind.Utc);
+        var root = new IsoNode { Name = "", Source = dir.Path, DiscPath = "", IsDirectory = true, Time = now };
+        int[] sizes = [1, 0, TestImage.S, TestImage.S + 1, 5000, 0, 2047, 9 * TestImage.S + 3, 17];
+        for (var i = 0; i < sizes.Length; i++)
+        {
+            var path = dir.Combine($"F{i}.BIN");
+            File.WriteAllBytes(path, Enumerable.Range(0, sizes[i]).Select(b => (byte)(b * 7 + i + 1)).ToArray());
+            root.Children.Add(new IsoNode { Name = $"F{i}.BIN", Source = path, DiscPath = $"F{i}.BIN", Size = sizes[i], Time = now });
+        }
+        var layout = Iso9660Writer.Build(root, null, Iso9660Writer.DefaultMaxExtent, now);
+        var expected = new byte[layout.TotalSectors * TestImage.S];
+        layout.Metadata.CopyTo(expected, 0);
+        foreach (var f in layout.Files)
+            File.ReadAllBytes(f.Source).CopyTo(expected, f.Sector * TestImage.S);
+
+        using var image = new Ps3Converter.FolderImageStream(layout, parallel, smallUpTo);
+        var got = new MemoryStream();
+        var buffer = new byte[3 * TestImage.S + 11]; // reads that end mid-file and mid-sector
+        int n;
+        while ((n = image.Read(buffer)) > 0) got.Write(buffer, 0, n);
+        Assert.Equal(expected, got.ToArray());
+    }
+
+    [Theory]
     [InlineData(1)]
     [InlineData(4)]
     public void A_file_shorter_than_it_was_measured_stops_the_image(int parallel)
