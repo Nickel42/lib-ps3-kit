@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased
+## 0.1.0-preview.2
 
 - Faster still: encrypted sectors are decrypted many per call into AES (the same bytes); the read-back checks read
   the next 4 MB while the last is hashed; a JB folder's small files are read back several at once when
